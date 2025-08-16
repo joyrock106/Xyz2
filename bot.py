@@ -7,9 +7,12 @@ import json
 import time
 import logging
 
+# ================= CONFIG =================
 BOT_TOKEN = "7641596987:AAHYUJ0CTkK0jVCeYWpDwCgUYEdMqPeL0pY"
 DOWNLOAD_DIR = "./downloads"
 WATERMARK = "@JOYROCK10"
+AUTO_SPLIT_SIZE = 1.95 * 1024 * 1024 * 1024  # 1.95 GB
+DEFAULT_PART_DURATION = 3600  # seconds (1 hour per split)
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -22,7 +25,7 @@ if os.path.exists(ADMINS_FILE):
     with open(ADMINS_FILE, 'r') as f:
         ADMINS = json.load(f)
 else:
-    ADMINS = [8078418903]  # Replace with your own Telegram user ID
+    ADMINS = [123456789]  # Replace with your Telegram user ID
     with open(ADMINS_FILE, 'w') as f:
         json.dump(ADMINS, f)
 
@@ -80,28 +83,24 @@ def start_handler(message: Message):
 def id_handler(message: Message):
     bot.reply_to(message, f"🆔 Your user ID: `{message.from_user.id}`", parse_mode="Markdown")
 
-# ========== Admin Management ==========
+# ===================== ADMIN MANAGEMENT =====================
 @bot.message_handler(commands=['addadmin'])
 def add_admin_handler(message: Message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "❌ Only admins can add new admins.")
         return
-
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "❌ Usage:\n`/addadmin [user_id]`", parse_mode="Markdown")
         return
-
     try:
         new_admin_id = int(args[1])
     except:
         bot.reply_to(message, "❌ User ID must be an integer.")
         return
-
     if new_admin_id in ADMINS:
         bot.reply_to(message, "ℹ️ This user is already an admin.")
         return
-
     ADMINS.append(new_admin_id)
     save_admins()
     bot.reply_to(message, f"✅ {new_admin_id} has been added as admin.")
@@ -111,44 +110,37 @@ def remove_admin_handler(message: Message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "❌ Only admins can remove admins.")
         return
-
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "❌ Usage:\n`/removeadmin [user_id]`", parse_mode="Markdown")
         return
-
     try:
         remove_id = int(args[1])
     except:
         bot.reply_to(message, "❌ User ID must be an integer.")
         return
-
     if remove_id not in ADMINS:
         bot.reply_to(message, "ℹ️ This user is not an admin.")
         return
-
     ADMINS.remove(remove_id)
     save_admins()
     bot.reply_to(message, f"✅ {remove_id} has been removed from admins.")
 
-# ========== Block Management ==========
+# ===================== BLOCK MANAGEMENT =====================
 @bot.message_handler(commands=['block'])
 def block_handler(message: Message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "❌ Only admins can block users.")
         return
-
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "❌ Usage:\n`/block [user_id]`", parse_mode="Markdown")
         return
-
     try:
         user_id = int(args[1])
     except:
         bot.reply_to(message, "❌ User ID must be an integer.")
         return
-
     BLOCKED_USERS.add(user_id)
     save_blocked()
     bot.reply_to(message, f"🚫 User {user_id} has been blocked.")
@@ -158,27 +150,23 @@ def unblock_handler(message: Message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "❌ Only admins can unblock users.")
         return
-
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "❌ Usage:\n`/unblock [user_id]`", parse_mode="Markdown")
         return
-
     try:
         user_id = int(args[1])
     except:
         bot.reply_to(message, "❌ User ID must be an integer.")
         return
-
     if user_id not in BLOCKED_USERS:
         bot.reply_to(message, "ℹ️ This user is not blocked.")
         return
-
     BLOCKED_USERS.remove(user_id)
     save_blocked()
     bot.reply_to(message, f"✅ User {user_id} has been unblocked.")
 
-# ========== Recording ==========
+# ===================== RECORDING =====================
 @bot.message_handler(commands=['rec'])
 def rec_handler(message: Message):
     if is_blocked(message.from_user.id):
@@ -187,12 +175,10 @@ def rec_handler(message: Message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "❌ Only admins can use this bot.")
         return
-
     args = message.text.split()
     if len(args) < 4:
         bot.reply_to(message, "❌ Usage:\n`/rec [m3u8_link] [duration] [filename]`", parse_mode="Markdown")
         return
-
     url, duration_str, filename = args[1], args[2], sanitize_filename(args[3])
     try:
         duration = int(duration_str)
@@ -203,7 +189,6 @@ def rec_handler(message: Message):
         return
 
     logging.info(f"User {message.from_user.id} started recording: URL={url}, Duration={duration}, Filename={filename}")
-
     streams = probe_streams(url)
     if not streams:
         bot.reply_to(message, "❌ Could not detect streams from URL.")
@@ -216,7 +201,6 @@ def rec_handler(message: Message):
 
     best_video = max(video_streams, key=lambda s: s['width'])
     video_idx = best_video['index']
-
     audio_streams = [s for s in streams if s.get('codec_type') == 'audio']
     audio_idxs = [s['index'] for s in audio_streams]
 
@@ -283,6 +267,35 @@ def rec_handler(message: Message):
         bot.reply_to(message, "❌ Recording failed, file not found.")
         return
 
+    # =================== AUTO-SPLIT IF LARGE ===================
+    file_size = os.path.getsize(output_path)
+    if file_size >= AUTO_SPLIT_SIZE:
+        bot.send_message(message.chat.id, f"⚡ File is larger than 1.95GB ({round(file_size/1024/1024/1024,2)}GB). Auto-splitting...")
+        split_dir = os.path.join(DOWNLOAD_DIR, f"{filename}_parts")
+        os.makedirs(split_dir, exist_ok=True)
+        output_template = os.path.join(split_dir, f"{filename}_part%03d.mp4")
+        split_cmd = [
+            'ffmpeg', '-i', output_path,
+            '-c', 'copy',
+            '-map', '0',
+            '-segment_time', str(DEFAULT_PART_DURATION),
+            '-f', 'segment',
+            output_template
+        ]
+        try:
+            subprocess.run(split_cmd, check=True)
+            parts = sorted(os.listdir(split_dir))
+            bot.send_message(message.chat.id, f"✅ Auto-split complete! {len(parts)} parts created.")
+            for part_file in parts:
+                part_path = os.path.join(split_dir, part_file)
+                if os.path.getsize(part_path) <= 50*1024*1024:  # Telegram upload limit
+                    with open(part_path, 'rb') as p:
+                        bot.send_video(message.chat.id, p, caption=f"📄 {part_file}")
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Auto-split failed: {e}")
+        return
+
+    # =================== SEND VIDEO IF NOT LARGE ===================
     with open(output_path, "rb") as video:
         caption = f"""
 🎬 *Recording Complete!*
