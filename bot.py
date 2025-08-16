@@ -2,31 +2,31 @@ import os
 import subprocess
 import datetime
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
+from telebot.types import Message
 import json
 import time
-import threading
 import logging
 
-BOT_TOKEN = "8311688539:AAGZwrKz3xD51doqK8wdgBtZDWsa2YkEydw"
+BOT_TOKEN = "7641596987:AAHYUJ0CTkK0jVCeYWpDwCgUYEdMqPeL0pY"
 DOWNLOAD_DIR = "./downloads"
 WATERMARK = "@JOYROCK10"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
+# ===================== ADMIN / BLOCK SYSTEM =====================
 ADMINS_FILE = 'admins.json'
+BLOCKED_USERS_FILE = 'blocked.json'
 
-# Load admins from file
+# Load admins
 if os.path.exists(ADMINS_FILE):
     with open(ADMINS_FILE, 'r') as f:
         ADMINS = json.load(f)
 else:
-    ADMINS = [8078418903]
+    ADMINS = [8078418903]  # Replace with your own Telegram user ID
     with open(ADMINS_FILE, 'w') as f:
         json.dump(ADMINS, f)
 
-BLOCKED_USERS_FILE = 'blocked.json'
-
+# Load blocked users
 if os.path.exists(BLOCKED_USERS_FILE):
     with open(BLOCKED_USERS_FILE, 'r') as f:
         BLOCKED_USERS = set(json.load(f))
@@ -47,6 +47,7 @@ def is_admin(user_id):
 def is_blocked(user_id):
     return user_id in BLOCKED_USERS
 
+# ===================== HELPERS =====================
 def sanitize_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in ('_', '-'))[:50]
 
@@ -61,34 +62,135 @@ def probe_streams(url):
         logging.error(f"ffprobe error: {e}")
         return []
 
+# ===================== COMMANDS =====================
 @bot.message_handler(commands=['start'])
 def start_handler(message: Message):
-    bot.send_message(message.chat.id, "🎬 M3U8 Recorder Bot এ স্বাগতম!\n\n"
-                                      "রেকর্ড করতে:\n/rec [m3u8_link] [duration_seconds] [filename]\n\n"
-                                      "শিডিউল করতে:\n/schedule YYYY-MM-DD HH:MM:SS URL DURATION FILENAME\n\n"
-                                      "অ্যাডমিন যোগ করতে:\n/addadmin [user_id]\nঅ্যাডমিন মুছে ফেলতে:\n/removeadmin [user_id]\n"
-                                      "লগ দেখতে:\n/log\n"
-                                      "ব্যবহারকারীদের ব্লক করতে:\n/block [user_id]\n"
-                                      "ব্লক উঠাতে:\n/unblock [user_id]")
+    bot.send_message(message.chat.id, 
+        "🎬 Welcome to M3U8 Recorder Bot!\n\n"
+        "To record:\n/rec [m3u8_link] [duration_seconds] [filename]\n\n"
+        "Admin commands:\n"
+        "/addadmin [user_id] - Add new admin\n"
+        "/removeadmin [user_id] - Remove admin\n"
+        "/block [user_id] - Block a user\n"
+        "/unblock [user_id] - Unblock a user\n"
+        "/id - Show your user ID"
+    )
 
 @bot.message_handler(commands=['id'])
 def id_handler(message: Message):
-    bot.reply_to(message, f"🆔 আপনার ইউজার আইডি: `{message.from_user.id}`", parse_mode="Markdown")
+    bot.reply_to(message, f"🆔 Your user ID: `{message.from_user.id}`", parse_mode="Markdown")
 
-# ... (অ্যাডমিন/ব্লক কমান্ড একই থাকবে) ...
+# ========== Admin Management ==========
+@bot.message_handler(commands=['addadmin'])
+def add_admin_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ Only admins can add new admins.")
+        return
 
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Usage:\n`/addadmin [user_id]`", parse_mode="Markdown")
+        return
+
+    try:
+        new_admin_id = int(args[1])
+    except:
+        bot.reply_to(message, "❌ User ID must be an integer.")
+        return
+
+    if new_admin_id in ADMINS:
+        bot.reply_to(message, "ℹ️ This user is already an admin.")
+        return
+
+    ADMINS.append(new_admin_id)
+    save_admins()
+    bot.reply_to(message, f"✅ {new_admin_id} has been added as admin.")
+
+@bot.message_handler(commands=['removeadmin'])
+def remove_admin_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ Only admins can remove admins.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Usage:\n`/removeadmin [user_id]`", parse_mode="Markdown")
+        return
+
+    try:
+        remove_id = int(args[1])
+    except:
+        bot.reply_to(message, "❌ User ID must be an integer.")
+        return
+
+    if remove_id not in ADMINS:
+        bot.reply_to(message, "ℹ️ This user is not an admin.")
+        return
+
+    ADMINS.remove(remove_id)
+    save_admins()
+    bot.reply_to(message, f"✅ {remove_id} has been removed from admins.")
+
+# ========== Block Management ==========
+@bot.message_handler(commands=['block'])
+def block_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ Only admins can block users.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Usage:\n`/block [user_id]`", parse_mode="Markdown")
+        return
+
+    try:
+        user_id = int(args[1])
+    except:
+        bot.reply_to(message, "❌ User ID must be an integer.")
+        return
+
+    BLOCKED_USERS.add(user_id)
+    save_blocked()
+    bot.reply_to(message, f"🚫 User {user_id} has been blocked.")
+
+@bot.message_handler(commands=['unblock'])
+def unblock_handler(message: Message):
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ Only admins can unblock users.")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Usage:\n`/unblock [user_id]`", parse_mode="Markdown")
+        return
+
+    try:
+        user_id = int(args[1])
+    except:
+        bot.reply_to(message, "❌ User ID must be an integer.")
+        return
+
+    if user_id not in BLOCKED_USERS:
+        bot.reply_to(message, "ℹ️ This user is not blocked.")
+        return
+
+    BLOCKED_USERS.remove(user_id)
+    save_blocked()
+    bot.reply_to(message, f"✅ User {user_id} has been unblocked.")
+
+# ========== Recording ==========
 @bot.message_handler(commands=['rec'])
 def rec_handler(message: Message):
     if is_blocked(message.from_user.id):
-        bot.reply_to(message, "🚫 আপনি এই বট ব্যবহার করতে পারবেন না।")
+        bot.reply_to(message, "🚫 You are blocked from using this bot.")
         return
     if not is_admin(message.from_user.id):
-        bot.reply_to(message, "❌ শুধুমাত্র অ্যাডমিন বট ব্যবহার করতে পারবেন।")
+        bot.reply_to(message, "❌ Only admins can use this bot.")
         return
 
     args = message.text.split()
     if len(args) < 4:
-        bot.reply_to(message, "❌ ব্যবহার:\n`/rec [m3u8_link] [duration] [filename]`", parse_mode="Markdown")
+        bot.reply_to(message, "❌ Usage:\n`/rec [m3u8_link] [duration] [filename]`", parse_mode="Markdown")
         return
 
     url, duration_str, filename = args[1], args[2], sanitize_filename(args[3])
@@ -97,20 +199,19 @@ def rec_handler(message: Message):
         if duration <= 0:
             raise ValueError()
     except:
-        bot.reply_to(message, "❌ সময় (duration) সেকেন্ডে অবশ্যই একটি ধনাত্মক পূর্ণসংখ্যা হতে হবে।")
+        bot.reply_to(message, "❌ Duration must be a positive integer (in seconds).")
         return
 
     logging.info(f"User {message.from_user.id} started recording: URL={url}, Duration={duration}, Filename={filename}")
 
     streams = probe_streams(url)
     if not streams:
-        bot.reply_to(message, "❌ URL থেকে স্ট্রিম সনাক্ত করা যায়নি।")
-        logging.error(f"Recording failed: URL streams not found for user {message.from_user.id}")
+        bot.reply_to(message, "❌ Could not detect streams from URL.")
         return
 
     video_streams = [s for s in streams if s.get('codec_type') == 'video' and 'width' in s]
     if not video_streams:
-        bot.reply_to(message, "❌ ভিডিও স্ট্রিম পাওয়া যায়নি।")
+        bot.reply_to(message, "❌ No video stream found.")
         return
 
     best_video = max(video_streams, key=lambda s: s['width'])
@@ -146,7 +247,7 @@ def rec_handler(message: Message):
         output_path
     ])
 
-    status_msg = bot.reply_to(message, "⏳ রেকর্ডিং শুরু হচ্ছে...\n⏱️ দয়া করে অপেক্ষা করুন...")
+    status_msg = bot.reply_to(message, "⏳ Recording started...\nPlease wait...")
 
     def update_progress(seconds, total, msg):
         percent = int((seconds / total) * 100)
@@ -154,7 +255,7 @@ def rec_handler(message: Message):
         remaining = total - seconds
         try:
             bot.edit_message_text(
-                f"⏳ রেকর্ডিং চলছে...\n📊 অগ্রগতি: [{bar}] {percent}%\n⏱️ বাকি: {remaining}s",
+                f"⏳ Recording in progress...\n📊 Progress: [{bar}] {percent}%\n⏱️ Remaining: {remaining}s",
                 chat_id=msg.chat.id,
                 message_id=msg.message_id
             )
@@ -169,31 +270,29 @@ def rec_handler(message: Message):
         process.wait()
 
         bot.edit_message_text(
-            f"✅ রেকর্ডিং সম্পন্ন!\n📊 অগ্রগতি: [██████████] 100%",
+            f"✅ Recording finished!\n📊 Progress: [██████████] 100%",
             chat_id=message.chat.id,
             message_id=status_msg.message_id
         )
 
     except Exception as e:
-        bot.reply_to(message, f"❌ রেকর্ডিং ব্যর্থ হয়েছে: {e}")
+        bot.reply_to(message, f"❌ Recording failed: {e}")
         return
 
     if not os.path.exists(output_path):
-        bot.reply_to(message, "❌ রেকর্ডিং ব্যর্থ হয়েছে, ফাইল পাওয়া যায়নি।")
+        bot.reply_to(message, "❌ Recording failed, file not found.")
         return
 
     with open(output_path, "rb") as video:
         caption = f"""
-🎬 *রেকর্ডিং সম্পন্ন!*
-📁 *ফাইলের নাম:* `{filename}.mp4`
-🕓 *দৈর্ঘ্য:* `{duration}s`
-💧 *ওয়াটারমার্ক:* {WATERMARK}
-✅ *M3U8 Recorder Bot* দ্বারা চালিত
+🎬 *Recording Complete!*
+📁 *Filename:* `{filename}.mp4`
+🕓 *Duration:* `{duration}s`
+💧 *Watermark:* {WATERMARK}
+✅ Powered by *M3U8 Recorder Bot*
 """
         bot.send_video(message.chat.id, video, caption=caption.strip(), parse_mode="Markdown")
 
-# Schedule command এর ভেতর থেকেও স্ক্রিনশট অংশ মুছে ফেলা হয়েছে
-# ...
-
+# ===================== START BOT =====================
 print("✅ Bot is running...")
 bot.infinity_polling()
