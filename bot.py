@@ -10,7 +10,7 @@ import logging
 # ================= CONFIG =================
 BOT_TOKEN = "7641596987:AAHYUJ0CTkK0jVCeYWpDwCgUYEdMqPeL0pY"
 DOWNLOAD_DIR = "./downloads"
-WATERMARK = "@JOYROCK10"
+WATERMARK = "@M3U8RECORDINGBOT"
 AUTO_SPLIT_SIZE = 1.95 * 1024 * 1024 * 1024  # 1.95 GB
 DEFAULT_PART_DURATION = 3600  # seconds (1 hour per split)
 
@@ -25,7 +25,7 @@ if os.path.exists(ADMINS_FILE):
     with open(ADMINS_FILE, 'r') as f:
         ADMINS = json.load(f)
 else:
-    ADMINS = [123456789]  # Replace with your Telegram user ID
+    ADMINS = [6738968979]  # Replace with your Telegram user ID
     with open(ADMINS_FILE, 'w') as f:
         json.dump(ADMINS, f)
 
