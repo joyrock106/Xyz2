@@ -7,14 +7,14 @@ import json
 import time
 import logging
 
-# ================= CONFIG =================
-BOT_TOKEN = "7641596987:AAHYUJ0CTkK0jVCeYWpDwCgUYEdMqPeL0pY"
+# ===================== CONFIG =====================
+BOT_TOKEN = "7986001230:AAHHfZKYnip33tt9uccDNvTe47bdMNgJSbM"
 DOWNLOAD_DIR = "./downloads"
-WATERMARK = "@M3U8RECORDINGBOT"
-AUTO_SPLIT_SIZE = 1.95 * 1024 * 1024 * 1024  # 1.95 GB
-DEFAULT_PART_DURATION = 3600  # seconds (1 hour per split)
+WATERMARK = "@SURAJVAI"
 
-bot = telebot.TeleBot(BOT_TOKEN)
+# Telebot init with timeout for slow network
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
+bot.timeout = 60  # Increase Telegram request timeout
 
 # ===================== ADMIN / BLOCK SYSTEM =====================
 ADMINS_FILE = 'admins.json'
@@ -25,7 +25,7 @@ if os.path.exists(ADMINS_FILE):
     with open(ADMINS_FILE, 'r') as f:
         ADMINS = json.load(f)
 else:
-    ADMINS = [6738968979]  # Replace with your Telegram user ID
+    ADMINS = [8078418903]  # Your Admin ID
     with open(ADMINS_FILE, 'w') as f:
         json.dump(ADMINS, f)
 
@@ -54,21 +54,30 @@ def is_blocked(user_id):
 def sanitize_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in ('_', '-'))[:50]
 
-def probe_streams(url):
-    cmd = ['ffprobe', '-v', 'error', '-show_entries',
-           'stream=index,codec_type,codec_name,width,height', '-of', 'json', url]
+def get_best_video_index(url: str) -> int:
+    """Pick highest resolution video stream using ffprobe."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-select_streams", "v",
+            "-show_entries", "stream=index,width,height",
+            "-of", "json", url
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         data = json.loads(result.stdout)
-        return data.get('streams', [])
+        streams = data.get("streams", [])
+        if not streams:
+            return 0
+        best = max(streams, key=lambda s: int(s.get("width", 0)) * int(s.get("height", 0)))
+        return best["index"]
     except Exception as e:
-        logging.error(f"ffprobe error: {e}")
-        return []
+        logging.error(f"ffprobe failed: {e}")
+        return 0
 
 # ===================== COMMANDS =====================
 @bot.message_handler(commands=['start'])
 def start_handler(message: Message):
-    bot.send_message(message.chat.id, 
+    bot.send_message(message.chat.id,
         "🎬 Welcome to M3U8 Recorder Bot!\n\n"
         "To record:\n/rec [m3u8_link] [duration_seconds] [filename]\n\n"
         "Admin commands:\n"
@@ -83,7 +92,7 @@ def start_handler(message: Message):
 def id_handler(message: Message):
     bot.reply_to(message, f"🆔 Your user ID: `{message.from_user.id}`", parse_mode="Markdown")
 
-# ===================== ADMIN MANAGEMENT =====================
+# ========== Admin Management ==========
 @bot.message_handler(commands=['addadmin'])
 def add_admin_handler(message: Message):
     if not is_admin(message.from_user.id):
@@ -126,7 +135,7 @@ def remove_admin_handler(message: Message):
     save_admins()
     bot.reply_to(message, f"✅ {remove_id} has been removed from admins.")
 
-# ===================== BLOCK MANAGEMENT =====================
+# ========== Block Management ==========
 @bot.message_handler(commands=['block'])
 def block_handler(message: Message):
     if not is_admin(message.from_user.id):
@@ -166,7 +175,7 @@ def unblock_handler(message: Message):
     save_blocked()
     bot.reply_to(message, f"✅ User {user_id} has been unblocked.")
 
-# ===================== RECORDING =====================
+# ========== Recording ==========
 @bot.message_handler(commands=['rec'])
 def rec_handler(message: Message):
     if is_blocked(message.from_user.id):
@@ -175,10 +184,12 @@ def rec_handler(message: Message):
     if not is_admin(message.from_user.id):
         bot.reply_to(message, "❌ Only admins can use this bot.")
         return
+
     args = message.text.split()
     if len(args) < 4:
         bot.reply_to(message, "❌ Usage:\n`/rec [m3u8_link] [duration] [filename]`", parse_mode="Markdown")
         return
+
     url, duration_str, filename = args[1], args[2], sanitize_filename(args[3])
     try:
         duration = int(duration_str)
@@ -188,124 +199,62 @@ def rec_handler(message: Message):
         bot.reply_to(message, "❌ Duration must be a positive integer (in seconds).")
         return
 
-    logging.info(f"User {message.from_user.id} started recording: URL={url}, Duration={duration}, Filename={filename}")
-    streams = probe_streams(url)
-    if not streams:
-        bot.reply_to(message, "❌ Could not detect streams from URL.")
-        return
-
-    video_streams = [s for s in streams if s.get('codec_type') == 'video' and 'width' in s]
-    if not video_streams:
-        bot.reply_to(message, "❌ No video stream found.")
-        return
-
-    best_video = max(video_streams, key=lambda s: s['width'])
-    video_idx = best_video['index']
-    audio_streams = [s for s in streams if s.get('codec_type') == 'audio']
-    audio_idxs = [s['index'] for s in audio_streams]
-
     if not os.path.exists(DOWNLOAD_DIR):
         os.makedirs(DOWNLOAD_DIR)
 
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = os.path.join(DOWNLOAD_DIR, f"{filename}_{timestamp}.mp4")
+    output_path = os.path.join(
+        DOWNLOAD_DIR,
+        f"{filename}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+    )
+
+    best_video_index = get_best_video_index(url)
 
     cmd = [
-        'ffmpeg', '-y',
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '2',
-        '-rw_timeout', '15000000',
-        '-i', url,
-        '-map', f'0:{video_idx}'
-    ]
-    for aidx in audio_idxs:
-        cmd.extend(['-map', f'0:{aidx}'])
-
-    cmd.extend([
-        '-metadata', f'title={filename}',
-        '-metadata', f'comment=Recorded by {WATERMARK}',
-        '-t', str(duration),
-        '-c:v', 'libx264',
-        '-c:a', 'aac',
+        "ffmpeg", "-y", "-i", url,
+        "-map", f"0:{best_video_index}",
+        "-map", "0:a?",
+        "-t", str(duration),
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-metadata", f"title={filename}",
+        "-metadata", f"comment=Recorded by {WATERMARK}",
         output_path
-    ])
+    ]
 
-    status_msg = bot.reply_to(message, "⏳ Recording started...\nPlease wait...")
-
-    def update_progress(seconds, total, msg):
-        percent = int((seconds / total) * 100)
-        bar = '█' * (percent // 10) + '░' * (10 - (percent // 10))
-        remaining = total - seconds
-        try:
-            bot.edit_message_text(
-                f"⏳ Recording in progress...\n📊 Progress: [{bar}] {percent}%\n⏱️ Remaining: {remaining}s",
-                chat_id=msg.chat.id,
-                message_id=msg.message_id
-            )
-        except telebot.apihelper.ApiTelegramException:
-            pass
+    status_msg = bot.reply_to(message, "⏳ Recording started with best quality video...\nPlease wait...")
 
     try:
         process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         for i in range(duration):
             time.sleep(1)
-            update_progress(i + 1, duration, status_msg)
         process.wait()
-
-        bot.edit_message_text(
-            f"✅ Recording finished!\n📊 Progress: [██████████] 100%",
-            chat_id=message.chat.id,
-            message_id=status_msg.message_id
-        )
-
+        bot.edit_message_text("✅ Recording finished!", chat_id=message.chat.id, message_id=status_msg.message_id)
     except Exception as e:
-        bot.reply_to(message, f"❌ Recording failed: {e}")
+        bot.send_message(message.chat.id, f"❌ Recording failed: {e}")
         return
 
-    if not os.path.exists(output_path):
-        bot.reply_to(message, "❌ Recording failed, file not found.")
-        return
-
-    # =================== AUTO-SPLIT IF LARGE ===================
-    file_size = os.path.getsize(output_path)
-    if file_size >= AUTO_SPLIT_SIZE:
-        bot.send_message(message.chat.id, f"⚡ File is larger than 1.95GB ({round(file_size/1024/1024/1024,2)}GB). Auto-splitting...")
-        split_dir = os.path.join(DOWNLOAD_DIR, f"{filename}_parts")
-        os.makedirs(split_dir, exist_ok=True)
-        output_template = os.path.join(split_dir, f"{filename}_part%03d.mp4")
-        split_cmd = [
-            'ffmpeg', '-i', output_path,
-            '-c', 'copy',
-            '-map', '0',
-            '-segment_time', str(DEFAULT_PART_DURATION),
-            '-f', 'segment',
-            output_template
-        ]
+    if os.path.exists(output_path):
+        # If file is large, send as document
+        filesize = os.path.getsize(output_path)
         try:
-            subprocess.run(split_cmd, check=True)
-            parts = sorted(os.listdir(split_dir))
-            bot.send_message(message.chat.id, f"✅ Auto-split complete! {len(parts)} parts created.")
-            for part_file in parts:
-                part_path = os.path.join(split_dir, part_file)
-                if os.path.getsize(part_path) <= 50*1024*1024:  # Telegram upload limit
-                    with open(part_path, 'rb') as p:
-                        bot.send_video(message.chat.id, p, caption=f"📄 {part_file}")
-        except Exception as e:
-            bot.send_message(message.chat.id, f"❌ Auto-split failed: {e}")
-        return
-
-    # =================== SEND VIDEO IF NOT LARGE ===================
-    with open(output_path, "rb") as video:
-        caption = f"""
+            if filesize > 50 * 1024 * 1024:  # 50MB
+                with open(output_path, "rb") as video:
+                    bot.send_document(message.chat.id, video, caption=f"🎬 Recording Complete: {filename}.mp4")
+            else:
+                with open(output_path, "rb") as video:
+                    caption = f"""
 🎬 *Recording Complete!*
 📁 *Filename:* `{filename}.mp4`
 🕓 *Duration:* `{duration}s`
 💧 *Watermark:* {WATERMARK}
 ✅ Powered by *M3U8 Recorder Bot*
 """
-        bot.send_video(message.chat.id, video, caption=caption.strip(), parse_mode="Markdown")
+                    bot.send_video(message.chat.id, video, caption=caption.strip(), parse_mode="Markdown")
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Sending video failed: {e}")
+    else:
+        bot.send_message(message.chat.id, "❌ Recording failed.")
 
 # ===================== START BOT =====================
 print("✅ Bot is running...")
-bot.infinity_polling()
+bot.infinity_polling(timeout=60, long_polling_timeout=60)
