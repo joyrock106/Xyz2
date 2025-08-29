@@ -8,9 +8,9 @@ import time
 import logging
 
 # ===================== CONFIG =====================
-BOT_TOKEN = "7986001230:AAHHfZKYnip33tt9uccDNvTe47bdMNgJSbM"
+BOT_TOKEN = "8235565518:AAHTb-rqnxJzQ3KEuY8-livc8L1tydgnO2k"
 DOWNLOAD_DIR = "./downloads"
-WATERMARK = "@SURAJVAI"
+WATERMARK = "@Nanette105"
 
 # Telebot init with timeout for slow network
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
@@ -25,7 +25,7 @@ if os.path.exists(ADMINS_FILE):
     with open(ADMINS_FILE, 'r') as f:
         ADMINS = json.load(f)
 else:
-    ADMINS = [8078418903]  # Your Admin ID
+    ADMINS = [1686274364]  # Your Admin ID
     with open(ADMINS_FILE, 'w') as f:
         json.dump(ADMINS, f)
 
