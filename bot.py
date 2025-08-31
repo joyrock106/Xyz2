@@ -10,7 +10,7 @@ import uuid
 # ===================== CONFIG =====================
 BOT_TOKEN = "7986001230:AAHHfZKYnip33tt9uccDNvTe47bdMNgJSbM"  # 🔴 Replace with your Bot Token
 DOWNLOAD_DIR = "./downloads"
-WATERMARK = "@SURAJVAI"
+WATERMARK = "@SURAJVAI0"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
