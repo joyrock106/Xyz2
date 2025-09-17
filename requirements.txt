@@ -1,5 +1,2 @@
-pyTelegramBotAPI==4.12.0
-m3u8
-ffmpeg-python
-requests
-pytz
+python-telegram-bot==20.7
+pytube==15.1.0
